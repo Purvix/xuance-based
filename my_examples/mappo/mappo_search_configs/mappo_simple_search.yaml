@@ -1,0 +1,108 @@
+dl_toolbox: "torch"  # The deep learning toolbox. Choices: "torch", "mindspore", "tensorlayer"
+project_name: "XuanCe_Benchmark"
+logger: "tensorboard"  # Choices: tensorboard, wandb.
+wandb_user_name: "your_user_name"
+render: true
+#render: false
+render_mode: 'human' # Choices: 'human', 'rgb_array'.
+fps: 50
+test: true
+#test: false
+#benchmark: true
+benchmark: false
+device: "cuda:0"  # Choose an calculating device. PyTorch: "cpu", "cuda:0"; TensorFlow: "cpu"/"CPU", "gpu"/"GPU"; MindSpore: "CPU", "GPU", "Ascend", "Davinci".
+distributed_training: False  # Whether to use multi-GPU for distributed training.
+master_port: '12355'  # The master port for current experiment when use distributed training.
+
+agent: "MAPPO"  # the learning algorithms_marl
+env_name: "Search"  # Name of the environment.
+env_id: "masac_simple_search"
+env_seed: 1
+continuous_action: false  # Continuous action space or not.
+learner: "MAPPO_Clip_Learner"
+policy: "Categorical_MAAC_Policy"
+#representation: "AC_CNN_Atari"
+
+#representation: "Basic_MLP"   # 使用简单的多层感知机s
+representation: "Basic_MLP"
+# CNN 卷积层配置 (针对 64x64 输入的经典 3 层卷积)
+# 输入: (4, 64, 64)
+# Conv1: 8x8, stride 4 -> (16, 15, 15)
+# Conv2: 4x4, stride 2 -> (32, 6, 6)
+# Conv3: 3x3, stride 1 -> (64, 4, 4) -> Flatten -> 1024 维向量
+#kernels: [4, 4, 4]
+#strides: [2, 2, 2]
+#filters: [16, 32, 64]
+#representation_hidden_sizes: [256, 256]
+
+
+vectorize: "DummyVecMultiAgentEnv"
+#runner: "MARL"  # Runner
+
+# recurrent settings for Basic_RNN representation.
+use_rnn: False  # If to use recurrent neural network as representation. (The representation should be "Basic_RNN").
+rnn: "GRU"  # The type of recurrent layer.
+fc_hidden_sizes: [64, 64, 64]  # The hidden size of feed forward layer in RNN representation.
+recurrent_hidden_size: 64  # The hidden size of the recurrent layer.
+N_recurrent_layers: 1  # The number of recurrent layer.
+dropout: 0  # dropout should be a number in range [0, 1], the probability of an element being zeroed.
+normalize: "LayerNorm"  # Layer normalization.
+initialize: "orthogonal"  # Network initializer.
+gain: 0.01
+
+#representation_hidden_size: []  # the units for each hidden layer
+representation_hidden_size: [128, 128]  # A list of hidden units for each layer of Basic_MLP representation networks.
+actor_hidden_size: [64, ]  # A list of hidden units for each layer of actor network.
+critic_hidden_size: [64, ]  # A list of hidden units for each layer of critic network.
+activation: "relu"  # The activation function of each hidden layer.
+activation_action: "sigmoid"  # The activation function for the last layer of the actor.
+use_parameter_sharing: True  # If to use parameter sharing for all agents' policies.
+use_actions_mask: False  # If to use actions mask for unavailable actions.
+
+
+seed: 1  # Random seed.
+parallels: 1  # The number of environments to run in parallel.
+buffer_size: 3200  # Number of the transitions (use_rnn is False), or the episodes (use_rnn is True) in replay buffer.
+n_epochs: 1  # Number of epochs to train.
+n_minibatch: 1  # Number of minibatch to sample and train.  batch_size = buffer_size // n_minibatch.
+learning_rate: 0.0007  # Learning rate.
+weight_decay: 0  # The steps to decay the greedy epsilon.
+
+vf_coef: 0.5  # Coefficient factor for critic loss.
+ent_coef: 0.02  # Coefficient factor for entropy loss.
+target_kl: 0.25  # For MAPPO_KL learner.
+clip_range: 0.2  # Ratio clip range, for MAPPO_Clip learner.
+clip_type: 1  # Gradient clip for Mindspore: 0: ms.ops.clip_by_value; 1: ms.nn.ClipByNorm().
+gamma: 0.95  # Discount factor.
+
+# tricks
+use_linear_lr_decay: True  # If to use linear learning rate decay.
+end_factor_lr_decay: 0.5  # The end factor for learning rate scheduler.
+use_global_state: False  # If to use global state to replace merged observations.
+use_value_clip: True  # Limit the value range.
+value_clip_range: 0.2  # The value clip range.
+use_value_norm: True  # Use running mean and std to normalize rewards.
+use_huber_loss: True  # True: use huber loss; False: use MSE loss.
+huber_delta: 10.0  # The threshold at which to change between delta-scaled L1 and L2 loss. (For huber loss).
+use_advnorm: True  # If to use advantage normalization.
+use_gae: True  # Use GAE trick.
+gae_lambda: 0.95  # The GAE lambda.
+use_grad_clip: True  # Gradient normalization.
+grad_clip_norm: 10.0  # The max norm of the gradient.
+
+running_steps: 10000000  # The total running steps.
+eval_interval: 10000  # The interval between every two trainings.
+test_episode: 5  # The episodes to test in each test period.
+
+log_dir: "logs/mappo/"
+model_dir: "models/mappo/"
+
+# my_configs
+grid_size : 64
+num_searchers : 1
+num_targets : 0
+num_obstacles : 0
+max_episode_steps : 200
+detect_radius : 4.0
+decay_rate : 0.98
+min_decay_val : 0.1

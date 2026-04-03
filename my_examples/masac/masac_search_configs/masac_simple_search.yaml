@@ -1,0 +1,102 @@
+dl_toolbox: "torch"  # The deep learning toolbox. Choices: "torch", "mindspore", "tensorlayer"
+project_name: "XuanCe_Benchmark"
+logger: "tensorboard"  # Choices: tensorboard, wandb.
+wandb_user_name: "your_user_name"
+
+render: true
+test: true
+benchmark: false
+parallels: 1
+
+#render: false
+#test: false
+#benchmark: true
+#parallels: 16
+
+render_mode: 'human' # Choices: 'human', 'rgb_array'.
+fps: 50
+
+device: "cuda:0"  # Choose an calculating device. PyTorch: "cpu", "cuda:0"; TensorFlow: "cpu"/"CPU", "gpu"/"GPU"; MindSpore: "CPU", "GPU", "Ascend", "Davinci".
+distributed_training: False  # Whether to use multi-GPU for distributed training.
+master_port: '12355'  # The master port for current experiment when use distributed training.
+
+agent: "MASAC"  # the learning algorithms_marl
+env_name: "Search"  # Name of the environment.
+env_id: "masac_simple_search"
+env_seed: 1
+continuous_action: true  # Continuous action space or not.
+learner: "MASAC_Learner"
+policy: "Gaussian_MASAC_Policy"
+#policy: "MASAC_Policy"
+#representation: "AC_CNN_Atari"
+
+#representation: "Basic_MLP"   # 使用简单的多层感知机s
+representation: "Basic_Identical"
+# CNN 卷积层配置 (针对 64x64 输入的经典 3 层卷积)
+# 输入: (4, 64, 64)
+# Conv1: 8x8, stride 4 -> (16, 15, 15)
+# Conv2: 4x4, stride 2 -> (32, 6, 6)
+# Conv3: 3x3, stride 1 -> (64, 4, 4) -> Flatten -> 1024 维向量
+#kernels: [4, 4, 4]
+#strides: [2, 2, 2]
+#filters: [16, 32, 64]
+#representation_hidden_sizes: [256, 256]
+
+
+vectorize: "DummyVecMultiAgentEnv"
+runner: "MARL"  # Runner
+
+# recurrent settings for Basic_RNN representation.
+use_rnn: False  # If to use recurrent neural network as representation. (The representation should be "Basic_RNN").
+rnn: "GRU"  # The type of recurrent layer.
+#fc_hidden_sizes: [64, 64, 64]  # The hidden size of feed forward layer in RNN representation.
+recurrent_hidden_size: 64  # The hidden size of the recurrent layer.
+N_recurrent_layers: 1  # The number of recurrent layer.
+dropout: 0  # dropout should be a number in range [0, 1], the probability of an element being zeroed.
+normalize: "LayerNorm"  # Layer normalization.
+initialize: "orthogonal"  # Network initializer.
+gain: 0.01
+
+#representation_hidden_size: []  # the units for each hidden layer
+actor_hidden_size: [256, 256]
+critic_hidden_size: [256, 256]
+activation: 'leaky_relu'
+activation_action: 'tanh'
+use_parameter_sharing: True
+use_actions_mask: False
+
+seed: 1
+#parallels: 1   # 1/29 16 to 1
+buffer_size: 20000 #原100000
+batch_size: 256
+learning_rate_actor: 0.01  # learning rate for actor
+learning_rate_critic: 0.001  # learning rate for critic
+gamma: 0.95  # discount factor
+tau: 0.001  # soft update for target networks
+alpha: 0.01
+use_automatic_entropy_tuning: True
+
+start_training: 1000  # start training after n steps
+running_steps: 10000000
+training_frequency: 25
+
+use_grad_clip: True
+grad_clip_norm: 0.5
+
+eval_interval: 10000
+test_episode: 5 # 1/29 5 to 1
+
+log_dir: "logs/masac/"
+model_dir: "models/masac/"
+
+# my_configs
+grid_size : 64
+num_searchers : 3
+num_targets : 0
+num_obstacles : 0
+max_episode_steps : 500
+detect_radius : 4.0
+decay_rate : 1
+min_decay_val : 0.1
+agent_collision_dist : 3.0
+max_speed : 2.0
