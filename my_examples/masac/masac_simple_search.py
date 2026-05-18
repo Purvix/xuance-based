@@ -5,10 +5,10 @@ from operator import itemgetter
 
 from xuance.common import get_configs, recursive_dict_update
 from xuance.environment import make_envs, REGISTRY_MULTI_AGENT_ENV
+from xuance.torch.representations import REGISTRY_Representation
 from xuance.torch.utils.operations import set_seed
 from xuance.torch.agents import MASAC_Agents
-from xuance.torch.policies.categorical_marl import MASAC_Policy
-
+from hybrid_representation import HybridRepresentation, HybridCriticRepresentation
 
 from simple_search import SearchEnv
 
@@ -27,10 +27,14 @@ if __name__ == "__main__":
     # print(f"DEBUG: 正在尝试加载配置文件: {configs_dict}")  # 打印出来确认一下
     configs_dict = recursive_dict_update(configs_dict, parser.__dict__)
     configs = argparse.Namespace(**configs_dict)
-
-    REGISTRY_MULTI_AGENT_ENV[configs.env_name] = SearchEnv
-
     set_seed(configs.seed)
+    REGISTRY_MULTI_AGENT_ENV[configs.env_name] = SearchEnv
+    REGISTRY_Representation["Hybrid_Representation"] = HybridRepresentation
+    # 动态同步 vec_dim
+    _tmp_env = SearchEnv(configs)
+    configs.vec_dim = _tmp_env.vec_dim
+    del _tmp_env
+
     envs = make_envs(configs)
     # print("Config object content:")
     # print(configs)
@@ -98,13 +102,13 @@ if __name__ == "__main__":
                     test_envs.render(configs.render_mode)
 
                     # 格式化打印每个智能体的观测
-                    print(f"--- Step {step_count} 观测 ---")
+                    # print(f"--- Step {step_count} 观测 ---")
                     # 注意：XuanCe 的 VecEnv 返回的 obs_dict 可能被包裹在列表中，即 obs_dict[0]
                     current_obs = obs_dict[0] if isinstance(obs_dict, list) else obs_dict
-                    for agent_id, obs in current_obs.items():
-                        # 保留两位小数，方便查看
-                        formatted_obs = [round(float(x), 2) for x in obs]
-                        print(f"  {agent_id}: {formatted_obs}")
+                    # for agent_id, obs in current_obs.items():
+                    #     # 保留两位小数，方便查看
+                    #     formatted_obs = [round(float(x), 2) for x in obs]
+                    #     print(f"  {agent_id}: {formatted_obs}")
 
                     # 获取动作 (使用 Agent 的 action 接口)
                     policy_out = Agent.action(obs_dict=obs_dict, test_mode=True)

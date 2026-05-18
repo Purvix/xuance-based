@@ -7,7 +7,15 @@ from xuance.torch import Module
 from xuance.torch.utils import NormalizeFunctions, ActivationFunctions
 from xuance.torch.policies import REGISTRY_Policy
 from xuance.torch.agents.multi_agent_rl.isac_agents import ISAC_Agents
+import sys, os; sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../../my_examples/masac'))
+from hybrid_representation import *
 
+# # 在 masac_simple_search.py 里，import 之后加上：
+# from xuance.torch.representations import REGISTRY_Representation
+# from hybrid_representation import HybridRepresentation, HybridCriticRepresentation
+#
+# REGISTRY_Representation["Hybrid_Representation"] = HybridRepresentation
+# REGISTRY_Representation["Hybrid_Critic_Representation"] = HybridCriticRepresentation
 
 class MASAC_Agents(ISAC_Agents):
     """The implementation of MASAC agents.
@@ -31,31 +39,97 @@ class MASAC_Agents(ISAC_Agents):
         super(MASAC_Agents, self).__init__(
             config, envs, num_agents, agent_keys, state_space, observation_space, action_space, callback
         )
+    #
+    # def _build_policy(self) -> Module:
+    #     """
+    #     Build representation(s) and policy(ies) for agent(s)
+    #
+    #     Returns:
+    #         policy (torch.nn.Module): A dict of policies.
+    #     """
+    #     normalize_fn = NormalizeFunctions[self.config.normalize] if hasattr(self.config, "normalize") else None
+    #     initializer = torch.nn.init.orthogonal_
+    #     activation = ActivationFunctions[self.config.activation]
+    #     device = self.device
+    #     agent = self.config.agent
+    #
+    #     # build representations
+    #     A_representation = self._build_representation(self.config.representation, self.observation_space, self.config)
+    #     critic_in = [sum(self.observation_space[k].shape) + sum(self.action_space[k].shape) for k in self.agent_keys]
+    #     space_critic_in = {k: (sum(critic_in),) for k in self.agent_keys}
+    #     C_representation = self._build_representation(self.config.representation, space_critic_in, self.config)
+    #
+    #     # build policies
+    #     if self.config.policy == "Gaussian_MASAC_Policy":
+    #         policy = REGISTRY_Policy["Gaussian_MASAC_Policy"](
+    #             action_space=self.action_space, n_agents=self.n_agents,
+    #             actor_representation=A_representation, critic_representation=C_representation,
+    #             actor_hidden_size=self.config.actor_hidden_size,
+    #             critic_hidden_size=self.config.critic_hidden_size,
+    #             normalize=normalize_fn, initialize=initializer, activation=activation,
+    #             activation_action=ActivationFunctions[self.config.activation_action],
+    #             device=device, use_distributed_training=self.distributed_training,
+    #             use_parameter_sharing=self.use_parameter_sharing, model_keys=self.model_keys,
+    #             use_rnn=self.use_rnn, rnn=self.config.rnn if self.use_rnn else None)
+    #         self.continuous_control = True
+    #     else:
+    #         raise AttributeError(f"{agent} currently does not support the policy named {self.config.policy}.")
+    #
+    #     return policy
 
     def _build_policy(self) -> Module:
-        """
-        Build representation(s) and policy(ies) for agent(s)
-
-        Returns:
-            policy (torch.nn.Module): A dict of policies.
-        """
         normalize_fn = NormalizeFunctions[self.config.normalize] if hasattr(self.config, "normalize") else None
         initializer = torch.nn.init.orthogonal_
         activation = ActivationFunctions[self.config.activation]
         device = self.device
-        agent = self.config.agent
 
-        # build representations
-        A_representation = self._build_representation(self.config.representation, self.observation_space, self.config)
-        critic_in = [sum(self.observation_space[k].shape) + sum(self.action_space[k].shape) for k in self.agent_keys]
-        space_critic_in = {k: (sum(critic_in),) for k in self.agent_keys}
-        C_representation = self._build_representation(self.config.representation, space_critic_in, self.config)
+        # ── 读取地图相关配置 ──────────────────────────────────────────
+        map_channels = getattr(self.config, 'map_channels', 3)
+        map_h = getattr(self.config, 'map_h', 64)
+        map_w = getattr(self.config, 'map_w', 64)
+        cnn_output_dim = getattr(self.config, 'cnn_output_dim', 256)
+        n_searchers = getattr(self.config, 'num_searchers', 3)
 
-        # build policies
+        # 向量部分维度：pos(2) + vel(2) + 队友((n_searchers-1)*2)
+        vec_dim = 4 + (n_searchers - 1) * 2
+
+        # ── 构建 Actor Representation（每个 agent 独立）─────────────
+        A_representation = {}
+        for k in self.agent_keys:
+            rep = HybridRepresentation(
+                input_space=self.observation_space[k],
+                vec_dim=vec_dim,
+                map_channels=map_channels,
+                map_h=map_h,
+                map_w=map_w,
+                cnn_output_dim=cnn_output_dim,
+            ).to(device)
+            A_representation[k] = rep
+
+        # ── 构建 Critic Representation ───────────────────────────────
+        # Critic 输入是所有 agent 的 [obs_0|obs_1|...|action_0|action_1|...] 拼接
+        action_dim_per_agent = list(self.action_space.values())[0].shape[0]  # 单个 agent action 维度
+
+        critic_rep = HybridCriticRepresentation(
+            n_agents=self.n_agents,
+            vec_dim=vec_dim,
+            map_channels=map_channels,
+            map_h=map_h,
+            map_w=map_w,
+            action_dim=action_dim_per_agent,
+            cnn_output_dim=cnn_output_dim,
+        ).to(device)
+
+        # XuanCe 要求 C_representation 是一个 dict，每个 key 对应一个 agent
+        # 但 Critic 实际上是共享的，所有 key 指向同一个对象
+        C_representation = {k: critic_rep for k in self.agent_keys}
+
+        # ── 构建 Policy ───────────────────────────────────────────────
         if self.config.policy == "Gaussian_MASAC_Policy":
             policy = REGISTRY_Policy["Gaussian_MASAC_Policy"](
                 action_space=self.action_space, n_agents=self.n_agents,
-                actor_representation=A_representation, critic_representation=C_representation,
+                actor_representation=A_representation,
+                critic_representation=C_representation,
                 actor_hidden_size=self.config.actor_hidden_size,
                 critic_hidden_size=self.config.critic_hidden_size,
                 normalize=normalize_fn, initialize=initializer, activation=activation,
@@ -65,7 +139,9 @@ class MASAC_Agents(ISAC_Agents):
                 use_rnn=self.use_rnn, rnn=self.config.rnn if self.use_rnn else None)
             self.continuous_control = True
         else:
-            raise AttributeError(f"{agent} currently does not support the policy named {self.config.policy}.")
+            raise AttributeError(
+                f"{self.config.agent} currently does not support the policy named {self.config.policy}."
+            )
 
         return policy
 

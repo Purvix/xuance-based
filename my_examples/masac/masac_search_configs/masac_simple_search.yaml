@@ -30,18 +30,8 @@ policy: "Gaussian_MASAC_Policy"
 #policy: "MASAC_Policy"
 #representation: "AC_CNN_Atari"
 
-#representation: "Basic_MLP"   # 使用简单的多层感知机s
-representation: "Basic_Identical"
-# CNN 卷积层配置 (针对 64x64 输入的经典 3 层卷积)
-# 输入: (4, 64, 64)
-# Conv1: 8x8, stride 4 -> (16, 15, 15)
-# Conv2: 4x4, stride 2 -> (32, 6, 6)
-# Conv3: 3x3, stride 1 -> (64, 4, 4) -> Flatten -> 1024 维向量
-#kernels: [4, 4, 4]
-#strides: [2, 2, 2]
-#filters: [16, 32, 64]
-#representation_hidden_sizes: [256, 256]
-
+representation: "Hybrid_Representation"
+#representation: "Basic_Identical"
 
 vectorize: "DummyVecMultiAgentEnv"
 runner: "MARL"  # Runner
@@ -67,10 +57,10 @@ use_actions_mask: False
 
 seed: 1
 #parallels: 1   # 1/29 16 to 1
-buffer_size: 20000 #原100000
+buffer_size: 10000 #原100000
 batch_size: 256
-learning_rate_actor: 0.01  # learning rate for actor
-learning_rate_critic: 0.001  # learning rate for critic
+learning_rate_actor: 0.0003  # learning rate for actor
+learning_rate_critic: 0.0003  # learning rate for critic
 gamma: 0.95  # discount factor
 tau: 0.001  # soft update for target networks
 alpha: 0.01
@@ -92,11 +82,21 @@ model_dir: "models/masac/"
 # my_configs
 grid_size : 64
 num_searchers : 3
-num_targets : 0
+num_targets : 5          # ← 改为 2（原来是 0，目标通道需要有目标）
 num_obstacles : 0
-max_episode_steps : 500
+max_episode_steps : 300
 detect_radius : 4.0
-decay_rate : 1
+decay_rate : 0.99
 min_decay_val : 0.1
 agent_collision_dist : 3.0
 max_speed : 2.0
+map_channels : 3         # ← 新增：地图通道数
+map_h : 64               # ← 新增：地图高度（等于 grid_size）
+map_w : 64               # ← 新增：地图宽度（等于 grid_size）
+
+# CNN 相关（vec_dim = 4 + (num_searchers-1)*2 = 8）
+vec_dim: 8
+cnn_output_dim: 256
+# tiaoshi
+debug_obs_vis: False
+debug_obs_interval: 20   # 每20步刷新一次，太频繁会拖慢速度

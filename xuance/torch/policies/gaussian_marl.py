@@ -437,19 +437,38 @@ class Basic_ISAC_Policy(Module):
             target_q[key] = torch.min(target_q_1, target_q_2)
         return rnn_hidden_critic_new_1, rnn_hidden_critic_new_2, target_q
 
+    # def soft_update(self, tau=0.005):
+    #     for ep, tp in zip(self.critic_1_representation.parameters(), self.target_critic_1_representation.parameters()):
+    #         tp.data.mul_(1 - tau)
+    #         tp.data.add_(tau * ep.data)
+    #     for ep, tp in zip(self.critic_1.parameters(), self.target_critic_1.parameters()):
+    #         tp.data.mul_(1 - tau)
+    #         tp.data.add_(tau * ep.data)
+    #     for ep, tp in zip(self.critic_2_representation.parameters(), self.target_critic_2_representation.parameters()):
+    #         tp.data.mul_(1 - tau)
+    #         tp.data.add_(tau * ep.data)
+    #     for ep, tp in zip(self.critic_2.parameters(), self.target_critic_2.parameters()):
+    #         tp.data.mul_(1 - tau)
+    #         tp.data.add_(tau * ep.data)
+
     def soft_update(self, tau=0.005):
-        for ep, tp in zip(self.critic_1_representation.parameters(), self.target_critic_1_representation.parameters()):
-            tp.data.mul_(1 - tau)
-            tp.data.add_(tau * ep.data)
-        for ep, tp in zip(self.critic_1.parameters(), self.target_critic_1.parameters()):
-            tp.data.mul_(1 - tau)
-            tp.data.add_(tau * ep.data)
-        for ep, tp in zip(self.critic_2_representation.parameters(), self.target_critic_2_representation.parameters()):
-            tp.data.mul_(1 - tau)
-            tp.data.add_(tau * ep.data)
-        for ep, tp in zip(self.critic_2.parameters(), self.target_critic_2.parameters()):
-            tp.data.mul_(1 - tau)
-            tp.data.add_(tau * ep.data)
+        for key in self.model_keys:
+            for ep, tp in zip(self.critic_1_representation[key].parameters(),
+                              self.target_critic_1_representation[key].parameters()):
+                tp.data.mul_(1 - tau)
+                tp.data.add_(tau * ep.data)
+            for ep, tp in zip(self.critic_1[key].parameters(),
+                              self.target_critic_1[key].parameters()):
+                tp.data.mul_(1 - tau)
+                tp.data.add_(tau * ep.data)
+            for ep, tp in zip(self.critic_2_representation[key].parameters(),
+                              self.target_critic_2_representation[key].parameters()):
+                tp.data.mul_(1 - tau)
+                tp.data.add_(tau * ep.data)
+            for ep, tp in zip(self.critic_2[key].parameters(),
+                              self.target_critic_2[key].parameters()):
+                tp.data.mul_(1 - tau)
+                tp.data.add_(tau * ep.data)
 
 
 class MASAC_Policy(Basic_ISAC_Policy):
