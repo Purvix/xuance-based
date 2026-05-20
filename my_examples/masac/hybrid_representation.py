@@ -45,7 +45,7 @@ class HybridRepresentation(nn.Module):
         super().__init__()
 
         # 从 config 读取，带默认值
-        vec_dim        = getattr(config, 'vec_dim', 8)
+        vec_dim        = getattr(config, 'vec_dim', 9)
         map_channels   = getattr(config, 'map_channels', 3)
         map_h          = getattr(config, 'map_h', 64)
         map_w          = getattr(config, 'map_w', 64)
@@ -113,35 +113,31 @@ class HybridCriticRepresentation(nn.Module):
       - 全部拼接后输出
     """
 
-    def __init__(
-        self,
-        n_agents: int,
-        vec_dim: int,           # 单个 agent 的向量部分维度
-        map_channels: int,
-        map_h: int,
-        map_w: int,
-        action_dim: int,        # 单个 agent 的 action 维度
-        cnn_output_dim: int = 256,
-    ):
+    def __init__(self, input_space, config=None, action_dim=2, **kwargs):
         super().__init__()
 
-        self.n_agents = n_agents
-        self.vec_dim = vec_dim
-        self.map_channels = map_channels
-        self.map_h = map_h
-        self.map_w = map_w
-        self.map_flat_dim = map_channels * map_h * map_w
-        self.obs_dim = vec_dim + self.map_flat_dim   # 单个 agent 完整 obs 维度
-        self.action_dim = action_dim
+        vec_dim = getattr(config, 'vec_dim', 9)
+        map_channels = getattr(config, 'map_channels', 3)
+        map_h = getattr(config, 'map_h', 64)
+        map_w = getattr(config, 'map_w', 64)
+        cnn_output_dim = getattr(config, 'cnn_output_dim', 256)
+        n_agents = getattr(config, 'num_searchers', 3)
+
+        print(f"[DEBUG Critic] vec_dim={vec_dim}, obs_dim={vec_dim + map_channels * map_h * map_w}")
+
+        self.n_agents       = n_agents
+        self.vec_dim        = vec_dim
+        self.map_channels   = map_channels
+        self.map_h          = map_h
+        self.map_w          = map_w
+        self.map_flat_dim   = map_channels * map_h * map_w
+        self.obs_dim        = vec_dim + self.map_flat_dim
+        self.action_dim     = action_dim
         self.cnn_output_dim = cnn_output_dim
 
-        # 所有 agent 共享同一个 CNN（参数共享，减少参数量）
         self.shared_cnn = CNNEncoder(map_channels, map_h, cnn_output_dim)
 
-        # 输出维度：每个 agent 的 (vec_dim + cnn_output_dim) + 所有 agent 的 action
         self.output_dim = n_agents * (vec_dim + cnn_output_dim) + n_agents * action_dim
-
-        # XuanCe representation 标准属性
         self.output_shapes = {'state': (self.output_dim,)}
 
     def forward(self, x: torch.Tensor):

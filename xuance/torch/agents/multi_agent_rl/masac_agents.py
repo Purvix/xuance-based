@@ -91,18 +91,14 @@ class MASAC_Agents(ISAC_Agents):
         n_searchers = getattr(self.config, 'num_searchers', 3)
 
         # 向量部分维度：pos(2) + vel(2) + 队友((n_searchers-1)*2)
-        vec_dim = 4 + (n_searchers - 1) * 2
+        vec_dim = getattr(self.config, 'vec_dim', 9)
 
         # ── 构建 Actor Representation（每个 agent 独立）─────────────
         A_representation = {}
         for k in self.agent_keys:
             rep = HybridRepresentation(
                 input_space=self.observation_space[k],
-                vec_dim=vec_dim,
-                map_channels=map_channels,
-                map_h=map_h,
-                map_w=map_w,
-                cnn_output_dim=cnn_output_dim,
+                config=self.config,  # ← 传 config，内部自己读 vec_dim
             ).to(device)
             A_representation[k] = rep
 
@@ -111,13 +107,9 @@ class MASAC_Agents(ISAC_Agents):
         action_dim_per_agent = list(self.action_space.values())[0].shape[0]  # 单个 agent action 维度
 
         critic_rep = HybridCriticRepresentation(
-            n_agents=self.n_agents,
-            vec_dim=vec_dim,
-            map_channels=map_channels,
-            map_h=map_h,
-            map_w=map_w,
-            action_dim=action_dim_per_agent,
-            cnn_output_dim=cnn_output_dim,
+            input_space=None,  # ← 占位，内部不用它
+            config=self.config,  # ← 传 config，内部自己读 vec_dim
+            action_dim=action_dim_per_agent,  # ← action_dim config 里没有，单独传
         ).to(device)
 
         # XuanCe 要求 C_representation 是一个 dict，每个 key 对应一个 agent

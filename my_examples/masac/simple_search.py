@@ -17,7 +17,9 @@ class SearchEnv(RawMultiAgentEnv):
         self.n_searchers = getattr(env_config, 'num_searchers', 3)  # RL控制的智能体
         self.n_targets = getattr(env_config, 'num_targets', 2)  # 规则控制的智能体
         self.n_obstacles = getattr(env_config, 'num_obstacles', 5)
+        self.max_obstacle_ratio = getattr(env_config, 'max_obstacle_ratio', 0.20)
         self.max_episode_steps = getattr(env_config, 'max_episode_steps', 200)
+        self.vec_dim = getattr(env_config, 'vec_dim', 8)
 
         # 渲染相关变量
         self.screen = None
@@ -35,6 +37,10 @@ class SearchEnv(RawMultiAgentEnv):
         self.step_penalty = getattr(env_config, 'step_penalty', -0.01)  # 每步扣 0.01 分
         self.agent_collision_dist = getattr(env_config, 'agent_collision_dist', 2.0)  # 碰撞判定距离
         self.agent_collision_penalty = getattr(env_config, 'agent_collision_penalty', -0.2)  # 碰撞扣 0.2 分
+        self.coverage_reward_scale = getattr(env_config, 'coverage_reward_scale', 10.0)
+        self.coverage_threshold = getattr(env_config, 'coverage_threshold', 0.85)
+        self.coverage_done_reward = getattr(env_config, 'coverage_done_reward', 20.0)
+        self._prev_coverage = 0.0  # 用于计算每步覆盖率增量
 
         # 智能体相关
         self.searcher_ids = [f"searcher_{i}" for i in range(self.n_searchers)]
@@ -50,6 +56,7 @@ class SearchEnv(RawMultiAgentEnv):
         self.map_h = getattr(env_config, 'map_h', self.grid_size)
         self.map_w = getattr(env_config, 'map_w', self.grid_size)
         self.max_other_agents = self.n_searchers - 1
+
 
         # --- 内部状态初始化 ---
         self._current_step = 0
@@ -93,11 +100,11 @@ class SearchEnv(RawMultiAgentEnv):
         # 4. 多通道地图 flatten
         self.map_flat_dim = self.map_channels * self.map_h * self.map_w
         # 总维度
-        obs_dim = base_obs_dim + self.other_agent_dim + self.map_flat_dim
+        obs_dim = base_obs_dim + self.other_agent_dim + self.map_flat_dim + 1
         self.observation_space = {agent: spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
             for agent in self.agents
         }
-        self.vec_dim = base_obs_dim + self.other_agent_dim  # = 8（n_searchers=3时）
+
         # # 计算状态维度
         # state_dim = self.grid_size * self.grid_size + 2 * self.n_searchers + 2 * self.n_targets  # 4096 + 6 + 4 = 4106
         # self.state_space = spaces.Box(low=0.0, high=1.0, shape=(state_dim,), dtype=np.float32)
@@ -143,15 +150,116 @@ class SearchEnv(RawMultiAgentEnv):
 
         return state_vector
 
+    def _global_coverage(self):
+        """返回 0~1 之间的全局覆盖率（所有智能体联合探索的格子比例）"""
+        global_map = np.max(self.agent_memory_maps, axis=0)  # (H, W)
+        explored = np.sum(global_map > 0)
+        total = self.grid_size * self.grid_size         #没有考虑障碍物
+        return float(explored) / float(total)
+
+    def _generate_obstacles(self):
+        """
+        生成混合类型障碍物地图，包含：
+          - 矩形障碍物（房间/墙壁）
+          - L形障碍物（拐角）
+          - 走廊（细长条）
+        保证边界留有安全通道，不封死地图。
+        """
+        obs_map = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
+        G = self.grid_size
+
+        # 安全边距：边界附近不放障碍物，保证智能体出生区域畅通
+        margin = int(self.detect_radius) + 2
+
+        # 目标覆盖率：障碍物占地图总面积的比例上限
+        max_cells = int(G * G * self.max_obstacle_ratio)
+
+        placed_cells = 0
+
+        for attempt in range(self.n_obstacles):
+            if placed_cells >= max_cells:
+                break
+
+            # 随机选择障碍物类型
+            obs_type = np.random.choice(['rect', 'rect', 'L', 'corridor'], p=[0.4, 0.2, 0.2, 0.2])
+
+            # 随机选择中心点（避开边界安全区）
+            cx = np.random.randint(margin, G - margin)
+            cy = np.random.randint(margin, G - margin)
+
+            # 生成候选障碍物的格子列表
+            cells = []
+
+            if obs_type == 'rect':
+                # 矩形：宽高随机，3~8 格
+                w = np.random.randint(3, 9)
+                h = np.random.randint(3, 9)
+                x0 = max(margin, cx - w // 2)
+                x1 = min(G - margin, cx + w // 2)
+                y0 = max(margin, cy - h // 2)
+                y1 = min(G - margin, cy + h // 2)
+                for x in range(x0, x1):
+                    for y in range(y0, y1):
+                        cells.append((x, y))
+
+            elif obs_type == 'L':
+                # L 形：两段矩形拼接
+                arm_len = np.random.randint(4, 10)
+                arm_w = np.random.randint(1, 3)
+                # 横臂
+                x0 = max(margin, cx - arm_len // 2)
+                x1 = min(G - margin, cx + arm_len // 2)
+                for x in range(x0, x1):
+                    for y in range(cy, min(G - margin, cy + arm_w)):
+                        cells.append((x, y))
+                # 竖臂
+                y0 = max(margin, cy - arm_len // 2)
+                y1 = min(G - margin, cy + arm_len // 2)
+                for y in range(y0, y1):
+                    for x in range(cx, min(G - margin, cx + arm_w)):
+                        cells.append((x, y))
+
+            elif obs_type == 'corridor':
+                # 走廊：细长条，随机水平或垂直
+                length = np.random.randint(8, 20)
+                width = np.random.randint(1, 3)
+                horizontal = np.random.rand() > 0.5
+                if horizontal:
+                    x0 = max(margin, cx - length // 2)
+                    x1 = min(G - margin, cx + length // 2)
+                    for x in range(x0, x1):
+                        for y in range(cy, min(G - margin, cy + width)):
+                            cells.append((x, y))
+                else:
+                    y0 = max(margin, cy - length // 2)
+                    y1 = min(G - margin, cy + length // 2)
+                    for y in range(y0, y1):
+                        for x in range(cx, min(G - margin, cx + width)):
+                            cells.append((x, y))
+
+            # 去重
+            cells = list(set(cells))
+
+            # 检查：不能封死地图（简单检查：障碍物不能紧贴边界 margin 区域）
+            valid = all(
+                margin <= x < G - margin and margin <= y < G - margin
+                for x, y in cells
+            )
+            if not valid or len(cells) == 0:
+                continue
+
+            # 写入地图
+            for x, y in cells:
+                obs_map[x, y] = 1.0
+            placed_cells += len(cells)
+
+        return obs_map
+
     def reset(self):
         self._current_step = 0
 
         # --- 1. 先生成障碍物 ---
-        self.global_obstacle_map = np.zeros((self.grid_size, self.grid_size))
-        # 示例：随机放置5个障碍块
-        for _ in range(self.n_obstacles):
-            ox, oy = np.random.randint(0, self.grid_size, 2)
-            self.global_obstacle_map[ox:min(ox + 5, 64), oy:min(oy + 5, 64)] = 1.0
+        self.global_obstacle_map = self._generate_obstacles()
 
         # --- 2. 定义安全边距（必须在目标位置初始化之前）---
         safe_margin = self.detect_radius + 1.0
@@ -216,11 +324,13 @@ class SearchEnv(RawMultiAgentEnv):
 
         observation = self._get_observations()
         info = {}
+        self._prev_coverage = self._global_coverage()  # reset 后重新记录基准
         return observation, info
 
     def step(self, action_dict):
         self._current_step += 1
         prev_pos = self.searcher_pos.copy()  # ← 在所有移动逻辑之前保存
+        coverage_before = self._global_coverage()
         rewards = {agent: 0.0 for agent in self.agents}
         # 用于存储每个 agent 的奖励组成，方便调试
         reward_info = {agent: {'step': 0.0, 'explore': 0.0, 'target': 0.0, 'collision': 0.0} for agent in self.agents}
@@ -290,7 +400,6 @@ class SearchEnv(RawMultiAgentEnv):
             r_target = 0.0
             agent_pos = self.searcher_pos[i]
 
-            # ── 计算当前步和上一步到最近存活目标的距离 ──────────────
             def min_dist_to_alive_targets(pos):
                 min_d = float('inf')
                 for j in range(self.n_targets):
@@ -299,24 +408,25 @@ class SearchEnv(RawMultiAgentEnv):
                     d = np.linalg.norm(pos - self.target_pos[j])
                     if d < min_d:
                         min_d = d
-                return min_d
+                # ← 关键修复：inf 说明没有存活目标，返回 0 避免 inf 参与运算
+                return min_d if min_d != float('inf') else 0.0
 
+            # 先算好两个距离（此时 target_alive 还未被本步修改）
             dist_now = min_dist_to_alive_targets(agent_pos)
             dist_prev = min_dist_to_alive_targets(prev_pos[i])
 
-            # ── 势能奖励：靠近给正值，远离扣回来，无法刷奖励 ─────────
-            # Φ(s) = -dist，势能差 = -dist_now - (-dist_prev) = dist_prev - dist_now
-            if np.any(self.target_alive):  # 还有存活目标才计算
-                r_potential = (dist_prev - dist_now) * 0.1
+            # 势能奖励
+            if np.any(self.target_alive):
+                r_potential = (dist_prev - dist_now) * 0.01
                 r_target += r_potential
 
-            # ── 捕获奖励：一次性，不可重复 ───────────────────────────
+            # 捕获奖励（在势能计算之后再修改 target_alive）
             for j in range(self.n_targets):
                 if not self.target_alive[j]:
                     continue
                 dist = np.linalg.norm(agent_pos - self.target_pos[j])
                 if dist < self.collision_dist:
-                    r_target += 10.0  # 捕获一次性奖励
+                    r_target += 20.0              # 捕获一次性奖励
                     self.target_alive[j] = False  # 立刻标记死亡，下一步不再计算
 
             # D. 智能体间的碰撞惩罚 (Agent Collision Penalty)
@@ -383,7 +493,7 @@ class SearchEnv(RawMultiAgentEnv):
                     r_obstacle -= 2.0  # 给予重罚！
 
             rewards[agent_key] = r_step + r_explore + r_target + r_collision + r_boundary + r_obstacle
-            total_reward += rewards[agent_key]
+            # total_reward += rewards[agent_key]
 
             # 存入 info 供测试打印
             reward_info[agent_key] = {
@@ -394,25 +504,70 @@ class SearchEnv(RawMultiAgentEnv):
                 'collision': r_collision,
                 'boundary': r_boundary
             }
+        # --- G. 全局覆盖率增量奖励（循环外，只算一次）---
+        coverage_after = self._global_coverage()
+        coverage_delta = coverage_after - coverage_before
+        r_coverage = coverage_delta * self.coverage_reward_scale if coverage_delta > 0 else 0.0
+        self._prev_coverage = coverage_after
 
-        info = {"reward_details": reward_info, "total_step_reward": total_reward}
+        total_reward = 0.0
+        for ak in self.agents:  # 用新变量名 ak，不污染外层
+            rewards[ak] += r_coverage
+            reward_info[ak]['coverage'] = r_coverage
+            reward_info[ak]['total'] = rewards[ak]  # 同步更新 total
+            total_reward += rewards[ak]
+
+        info = {"reward_details": reward_info, "total_step_reward": total_reward,
+                "episode_score": rewards}
 
         # --- 4. 结束条件 ---
         truncated = False
         if self._current_step >= self.max_episode_steps:
             truncated = True
 
-        # 新增：所有目标被捕获，episode 成功结束
-        all_captured = not np.any(self.target_alive)
-        if all_captured:
-            for agent in self.agents:
-                terminated[agent] = True
-            # 给所有智能体一个团队完成奖励
-            for agent in self.agents:
-                rewards[agent] += 10.0
+        # --- 覆盖率达标终止 ---
+        if coverage_after >= self.coverage_threshold:
+            for ak in self.agents:
+                terminated[ak] = True
+                rewards[ak] += self.coverage_done_reward
+
+        # --- 目标全部捕获终止 ---
+        if not np.any(self.target_alive):
+            time_bonus = (self.max_episode_steps - self._current_step) * 0.1
+            for ak in self.agents:
+                terminated[ak] = True
+                rewards[ak] += time_bonus
 
         observation = self._get_observations()
+
+        # episode 结束时打印覆盖率
+        # if any(terminated.values()) or truncated:
+        #     coverage = self._episode_coverage()
+            # print(f"[Episode] 可通行区域覆盖率: {coverage:.2%}")
+
         return observation, rewards, terminated, truncated, info
+
+    def _episode_coverage(self):
+        """
+        计算所有 agent 联合覆盖的可通行格子比例（排除障碍物）。
+        ch0 是探索记忆通道。
+        """
+        # 合并所有 agent 的 ch0 探索记忆（任意一个探索过即算）
+        combined = np.zeros((self.map_h, self.map_w), dtype=bool)
+        for i in range(self.n_searchers):
+            combined |= (self.agent_maps[i, 0, :, :] > 0)  # ch0 通道
+
+        # 可通行格子总数（排除障碍物）
+        passable_mask = self.global_obstacle_map == 0  # ← 字段名修正
+        passable_total = np.sum(passable_mask)
+
+        if passable_total == 0:
+            return 0.0
+
+        # 已探索 且 可通行 的格子
+        explored_passable = np.sum(combined & passable_mask)
+
+        return float(explored_passable) / float(passable_total)
 
     def _update_maps_and_memory(self):
         """
@@ -488,6 +643,8 @@ class SearchEnv(RawMultiAgentEnv):
         obs_dict = {}
         # 地图对角线长度，用于归一化任意相对距离到 [-1, 1]
         diag = self.grid_size * np.sqrt(2)
+        # --- 全局覆盖率 ---
+        global_coverage = np.array([self._global_coverage()], dtype=np.float32)
 
         for i, agent_key in enumerate(self.agents):
             # --- 1. 自身位置归一化 [2] ---
@@ -522,12 +679,15 @@ class SearchEnv(RawMultiAgentEnv):
             # --- 4. 多通道地图 flatten [map_channels * map_h * map_w] ---
             map_flat = self.agent_maps[i].flatten()  # shape: (3, 64, 64) → (12288,)
 
-            # --- 5. 拼接所有观测 ---
+
+
+            # --- 6. 拼接所有观测 ---
             obs = np.concatenate([
                 pos_norm,  # [2]
                 vel_norm,  # [2]
                 other_agent_obs,  # [max_other_agents * 2]，固定维度
-                map_flat  # [map_channels * map_h * map_w]
+                global_coverage,  # 1   ← 必须在 map_flat 之前
+                map_flat  # map_channels * H * W
             ]).astype(np.float32)
 
             obs_dict[agent_key] = obs

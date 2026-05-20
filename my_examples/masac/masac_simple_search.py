@@ -33,9 +33,11 @@ if __name__ == "__main__":
     # 动态同步 vec_dim
     _tmp_env = SearchEnv(configs)
     configs.vec_dim = _tmp_env.vec_dim
+    print(f"[DEBUG] 同步后 configs.vec_dim = {configs.vec_dim}")
     del _tmp_env
 
     envs = make_envs(configs)
+    print(f"[DEBUG] make_envs 后 configs.vec_dim = {configs.vec_dim}")  # 确认 make_envs 没有覆盖 configs
     # print("Config object content:")
     # print(configs)
     # print("hidden_sizes in config:", getattr(configs, 'hidden_sizes', None))
@@ -43,6 +45,9 @@ if __name__ == "__main__":
 
 
     Agent = MASAC_Agents(config=configs, envs=envs)
+    print(f"[DEBUG] critic_1_representation 类型: {type(list(Agent.policy.critic_1_representation.values())[0])}")
+    print(
+        f"[DEBUG] critic_1_representation output_shapes: {list(Agent.policy.critic_1_representation.values())[0].output_shapes}")
 
     train_information = {"Deep learning toolbox": configs.dl_toolbox,
                          "Calculating device": configs.device,
@@ -87,6 +92,28 @@ if __name__ == "__main__":
             # scores = Agent.test(test_episodes=configs.test_episode, test_envs=test_envs, close_envs=True)
             # print(f"Mean Score: {np.mean(scores)}, Std: {np.std(scores)}")
             # print("Finish testing.")
+            # ── 热力图初始化（受 yaml 开关控制）──────────────────────────
+            visualizer = None
+            if getattr(configs, 'heatmap_vis', False):
+                from visualize_cnn import CNNHeatmapVisualizer
+
+                _repr_dict = Agent.policy.actor_representation
+
+                # 参数共享时 key 可能是 'share' 或第一个 agent 名，取第一个值即可
+                _repr_obj = list(_repr_dict.values())[0]
+
+                print(f"[DEBUG] representation 类型: {type(_repr_obj)}")
+                print(f"[DEBUG] representation keys: {list(_repr_dict.keys())}")
+
+                visualizer = CNNHeatmapVisualizer(
+                    cnn_encoder=_repr_obj.cnn_encoder,  # ← 从对象上访问
+                    vec_dim=configs.vec_dim,
+                    grid_size=getattr(configs, 'grid_size', 64),
+                )
+                print(f"[热力图] 已开启，每 {getattr(configs, 'heatmap_interval', 20)} 步刷新一次")
+            print(f"[DEBUG] heatmap_vis={getattr(configs, 'heatmap_vis', '未找到')}, "
+                      f"heatmap_save={getattr(configs, 'heatmap_save', '未找到')}")
+            # ─────────────────────────────────────────────────────────────
             all_scores = []
 
             for i_episode in range(configs.test_episode):
@@ -110,6 +137,34 @@ if __name__ == "__main__":
                     #     formatted_obs = [round(float(x), 2) for x in obs]
                     #     print(f"  {agent_id}: {formatted_obs}")
 
+                    # ── 热力图（受开关和间隔控制）────────────────────────────────
+                    if visualizer is not None:
+                        heatmap_interval = getattr(configs, 'heatmap_interval', 20)
+                        if step_count % heatmap_interval == 0:
+
+                            # 取第一个智能体的观测
+                            obs_sample = current_obs['searcher_0']
+
+                            # 从 VecEnv 里取出真实环境实例，获取位置信息
+                            env_instance = test_envs.envs[0].env
+                            print(f"[DEBUG] env_instance 类型: {type(env_instance)}")
+                            print(f"[DEBUG] searcher_pos: {env_instance.searcher_pos}")
+
+                            # 决定是否保存文件
+                            save_path = None
+                            if getattr(configs, 'heatmap_save', False):
+                                save_path = f"heatmap_ep{i_episode + 1:02d}_step{step_count:04d}.png"
+
+                            visualizer.show(
+                                obs=obs_sample,
+                                searcher_pos=env_instance.searcher_pos,
+                                target_pos=env_instance.target_pos,
+                                target_alive=env_instance.target_alive,
+                                step=step_count,
+                                save_path=save_path,
+                            )
+                    # ─────────────────────────────────────────────────────────────
+
                     # 获取动作 (使用 Agent 的 action 接口)
                     policy_out = Agent.action(obs_dict=obs_dict, test_mode=True)
 
@@ -126,14 +181,14 @@ if __name__ == "__main__":
                         episode_rewards[agent] += r
 
                     # --- 格式化打印：当前步奖励 + 累计奖励 ---
-                    print_str = f"[Step {step_count:03d}] "
-                    for agent in step_rewards.keys():
-                        print_str += f"{agent}: 步奖励={step_rewards[agent]:+.2f}, 累计={episode_rewards[agent]:+.2f} | "
-                    print(print_str)
+                    # print_str = f"[Step {step_count:03d}] "
+                    # for agent in step_rewards.keys():
+                    #     print_str += f"{agent}: 步奖励={step_rewards[agent]:+.2f}, 累计={episode_rewards[agent]:+.2f} | "
+                    # print(print_str)
 
-                    # 可选：打印详细分解 (如果你需要看各项惩罚的具体数值，可以取消注释)
-                    if "reward_details" in info_list[0]:
-                        print(f"  详细 = {info_list[0]['reward_details']}")
+                    # # 可选：打印详细分解 (如果你需要看各项惩罚的具体数值，可以取消注释)
+                    # if "reward_details" in info_list[0]:
+                    #     print(f"  详细 = {info_list[0]['reward_details']}")
 
                     # 状态更新
                     obs_dict = next_obs_dict
@@ -156,6 +211,10 @@ if __name__ == "__main__":
                 print(f"Episode {i_episode + 1} finished. Score: {score}")
 
             print(f"Mean Score: {np.mean(all_scores)}, Std: {np.std(all_scores)}")
+            # ── 清理热力图 hook ───────────────────────────────────────────
+            if visualizer is not None:
+                visualizer.remove_hooks()
+            # ─────────────────────────────────────────────────────────────
             test_envs.close()
         else:
             Agent.train(configs.running_steps // configs.parallels)
