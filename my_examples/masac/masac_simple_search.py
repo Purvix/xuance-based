@@ -33,11 +33,11 @@ if __name__ == "__main__":
     # 动态同步 vec_dim
     _tmp_env = SearchEnv(configs)
     configs.vec_dim = _tmp_env.vec_dim
-    print(f"[DEBUG] 同步后 configs.vec_dim = {configs.vec_dim}")
+    # print(f"[DEBUG] 同步后 configs.vec_dim = {configs.vec_dim}")
     del _tmp_env
 
     envs = make_envs(configs)
-    print(f"[DEBUG] make_envs 后 configs.vec_dim = {configs.vec_dim}")  # 确认 make_envs 没有覆盖 configs
+    # print(f"[DEBUG] make_envs 后 configs.vec_dim = {configs.vec_dim}")  # 确认 make_envs 没有覆盖 configs
     # print("Config object content:")
     # print(configs)
     # print("hidden_sizes in config:", getattr(configs, 'hidden_sizes', None))
@@ -45,9 +45,9 @@ if __name__ == "__main__":
 
 
     Agent = MASAC_Agents(config=configs, envs=envs)
-    print(f"[DEBUG] critic_1_representation 类型: {type(list(Agent.policy.critic_1_representation.values())[0])}")
-    print(
-        f"[DEBUG] critic_1_representation output_shapes: {list(Agent.policy.critic_1_representation.values())[0].output_shapes}")
+    # print(f"[DEBUG] critic_1_representation 类型: {type(list(Agent.policy.critic_1_representation.values())[0])}")
+    # print(
+    #     f"[DEBUG] critic_1_representation output_shapes: {list(Agent.policy.critic_1_representation.values())[0].output_shapes}")
 
     train_information = {"Deep learning toolbox": configs.dl_toolbox,
                          "Calculating device": configs.device,
@@ -83,7 +83,7 @@ if __name__ == "__main__":
                                     "step": Agent.current_step}
                 # save best model
                 Agent.save_model(model_name="best_model.pth")
-        # end benchmarking
+                Agent.save_model(model_name="final_train_model.pth")
         print("Best Model Score: %.2f, std=%.2f" % (best_scores_info["mean"], best_scores_info["std"]))
     else:
         if configs.test:
@@ -102,8 +102,8 @@ if __name__ == "__main__":
                 # 参数共享时 key 可能是 'share' 或第一个 agent 名，取第一个值即可
                 _repr_obj = list(_repr_dict.values())[0]
 
-                print(f"[DEBUG] representation 类型: {type(_repr_obj)}")
-                print(f"[DEBUG] representation keys: {list(_repr_dict.keys())}")
+                # print(f"[DEBUG] representation 类型: {type(_repr_obj)}")
+                # print(f"[DEBUG] representation keys: {list(_repr_dict.keys())}")
 
                 visualizer = CNNHeatmapVisualizer(
                     cnn_encoder=_repr_obj.cnn_encoder,  # ← 从对象上访问
@@ -111,8 +111,8 @@ if __name__ == "__main__":
                     grid_size=getattr(configs, 'grid_size', 64),
                 )
                 print(f"[热力图] 已开启，每 {getattr(configs, 'heatmap_interval', 20)} 步刷新一次")
-            print(f"[DEBUG] heatmap_vis={getattr(configs, 'heatmap_vis', '未找到')}, "
-                      f"heatmap_save={getattr(configs, 'heatmap_save', '未找到')}")
+            # print(f"[DEBUG] heatmap_vis={getattr(configs, 'heatmap_vis', '未找到')}, "
+            #           f"heatmap_save={getattr(configs, 'heatmap_save', '未找到')}")
             # ─────────────────────────────────────────────────────────────
             all_scores = []
 

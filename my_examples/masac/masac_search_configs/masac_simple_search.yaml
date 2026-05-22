@@ -90,11 +90,11 @@ detect_radius : 4.0
 decay_rate : 0.998
 min_decay_val : 0.1
 coverage_reward_scale: 10.0  # 全局覆盖率增量奖励系数
-coverage_threshold: 0.85     # 覆盖率达到此值时 episode 成功终止
+coverage_threshold: 0.90     # 覆盖率达到此值时 episode 成功终止
 coverage_done_reward: 20.0   # 覆盖率达标时的额外奖励
 
 agent_collision_dist : 3.0
-max_speed : 2.0
+max_speed : 1.0
 map_channels : 3         # ← 新增：地图通道数
 map_h : 64               # ← 新增：地图高度（等于 grid_size）
 map_w : 64               # ← 新增：地图宽度（等于 grid_size）
@@ -103,7 +103,7 @@ map_w : 64               # ← 新增：地图宽度（等于 grid_size）
 vec_dim: 9
 cnn_output_dim: 256
 # 观测可视化
-debug_obs_vis: False
+debug_obs_vis: True
 debug_obs_interval: 20   # 每20步刷新一次，太频繁会拖慢速度
 heatmap_vis: False        # ← True=开启热力图，False=关闭
 heatmap_interval: 20      # ← 每N步画一次（建议20~50）
