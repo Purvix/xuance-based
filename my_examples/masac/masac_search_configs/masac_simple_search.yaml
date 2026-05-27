@@ -3,15 +3,15 @@ project_name: "XuanCe_Benchmark"
 logger: "tensorboard"  # Choices: tensorboard, wandb.
 wandb_user_name: "your_user_name"
 
-render: true
-test: true
-benchmark: false
-parallels: 1
+#render: true
+#test: true
+#benchmark: false
+#parallels: 1
 
-#render: false
-#test: false
-#benchmark: true
-#parallels: 16
+render: false
+test: false
+benchmark: true
+parallels: 16
 
 render_mode: 'human' # Choices: 'human', 'rgb_array'.
 fps: 50
@@ -87,7 +87,7 @@ num_obstacles : 0
 max_obstacle_ratio: 0.20 # 障碍物占地图面积上限 20%
 max_episode_steps : 300
 detect_radius : 4.0
-decay_rate : 0.998
+decay_rate : 1
 min_decay_val : 0.1
 coverage_reward_scale: 10.0  # 全局覆盖率增量奖励系数
 coverage_threshold: 0.90     # 覆盖率达到此值时 episode 成功终止
@@ -98,12 +98,21 @@ max_speed : 1.0
 map_channels : 3         # ← 新增：地图通道数
 map_h : 64               # ← 新增：地图高度（等于 grid_size）
 map_w : 64               # ← 新增：地图宽度（等于 grid_size）
+# ICM 好奇心模块
+use_icm: False
+icm_eta: 0.01          # 内在奖励缩放系数，越大越好奇
+icm_beta: 0.2          # forward/inverse 损失权重（0=纯逆向，1=纯前向）
+icm_lr: 0.0003         # ICM 学习率
+icm_feature_dim: 128   # 编码器输出特征维度
+icm_warmup_epochs: 300      # 前 300 个 epoch 不使用内在奖励
+icm_eta_max: 0.01           # 最终 eta 值（原来的 eta）
+icm_eta_rampup_epochs: 100  # 用 100 个 epoch 从 0 线性升到 eta_max
 
 # CNN 相关（vec_dim = 4 + (num_searchers-1)*2 = 8）
 vec_dim: 9
 cnn_output_dim: 256
 # 观测可视化
-debug_obs_vis: True
+debug_obs_vis: False
 debug_obs_interval: 20   # 每20步刷新一次，太频繁会拖慢速度
 heatmap_vis: False        # ← True=开启热力图，False=关闭
 heatmap_interval: 20      # ← 每N步画一次（建议20~50）

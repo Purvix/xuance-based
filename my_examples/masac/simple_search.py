@@ -87,6 +87,10 @@ class SearchEnv(RawMultiAgentEnv):
         self.debug_obs_interval = getattr(env_config, 'debug_obs_interval', 20)  # 每隔多少步刷新
         self._fig = None  # matplotlib figure 句柄
 
+        # ── ICM：由外部 trainer 注入，注入后才生效 ──────────────────────────
+        self.icm = None  # 外部注入 ICMModule 实例
+        self._icm_obs_buffer = None  # 暂存上一步观测，供 step() 使用
+
         # --- 空间定义 ---
         # 动作空间: 连续控制 [vx, vy], 范围 [-1, 1]
         self.action_space = {agent: spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
@@ -327,6 +331,12 @@ class SearchEnv(RawMultiAgentEnv):
         observation = self._get_observations()
         info = {}
         self._prev_coverage = self._global_coverage()  # reset 后重新记录基准
+        # ── ICM 缓冲区初始化 ────────────────────────────────────────────────
+        if self.icm is not None:
+            self._icm_obs_buffer = np.stack(
+                [observation[ak] for ak in self.agents], axis=0
+            )  # (n_agents, obs_dim)
+
         return observation, info
 
     def step(self, action_dict):
@@ -570,6 +580,25 @@ class SearchEnv(RawMultiAgentEnv):
         #         rewards[ak] += time_bonus
 
         observation = self._get_observations()
+        # ── ICM 内在奖励（只推理，不更新网络）────────────────────────────────
+        if self.icm is not None and self._icm_obs_buffer is not None:
+            obs_next_arr = np.stack(
+                [observation[ak] for ak in self.agents], axis=0
+            )  # (n_agents, obs_dim)
+            actions_arr = np.stack(
+                [action_dict[ak] for ak in self.agents], axis=0
+            )  # (n_agents, action_dim)
+
+            intrinsic = self.icm.compute_intrinsic_reward(
+                self._icm_obs_buffer, actions_arr, obs_next_arr
+            )  # (n_agents,)
+
+            for idx, ak in enumerate(self.agents):
+                rewards[ak] += float(intrinsic[idx])
+                reward_info[ak]['icm_intrinsic'] = float(intrinsic[idx])
+
+            # 滚动缓冲区（不调用 icm.update，更新由训练循环负责）
+            self._icm_obs_buffer = obs_next_arr
 
         # episode 结束时打印覆盖率
         # if any(terminated.values()) or truncated:

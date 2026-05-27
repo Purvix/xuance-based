@@ -1,5 +1,6 @@
 import argparse
 import numpy as np
+import torch
 from copy import deepcopy
 from operator import itemgetter
 
@@ -11,6 +12,110 @@ from xuance.torch.agents import MASAC_Agents
 from hybrid_representation import HybridRepresentation, HybridCriticRepresentation
 
 from simple_search import SearchEnv
+from icm_module import ICMModule
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ← 新增：安全注入函数，放在所有函数定义最前面
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def _inject_icm_to_envs(vec_envs, icm_instance):
+    """
+    安全穿透 XuanCe wrapper 层，找到真正的 SearchEnv 实例并注入 ICM。
+    遇到 None 或超过10层时停止，避免无限循环。
+    """
+    injected = 0
+    for env_wrapper in vec_envs.envs:
+        inner = env_wrapper
+        depth = 0
+        # 只要还有 .env 属性、不是 None、还不是 SearchEnv，就继续往里钻
+        while (
+            hasattr(inner, 'env')
+            and inner.env is not None
+            and not isinstance(inner, SearchEnv)
+            and depth < 10
+        ):
+            inner = inner.env
+            depth += 1
+
+        if isinstance(inner, SearchEnv):
+            inner.icm = icm_instance
+            inner._icm_obs_buffer = None   # reset() 时会自动初始化
+            injected += 1
+        else:
+            print(f"[ICM WARNING] 未能找到 SearchEnv，实际类型: {type(inner).__name__}")
+
+    print(f"[ICM] 成功注入 {injected}/{len(vec_envs.envs)} 个环境")
+
+
+def _print_env_hierarchy(vec_envs):
+    """调试用：打印第一个环境的 wrapper 层级，确认 SearchEnv 在哪一层"""
+    inner = vec_envs.envs[0]
+    depth = 0
+    print("[ICM DEBUG] 环境 wrapper 层级：")
+    while inner is not None and depth < 10:
+        print(f"  层级 {depth}: {type(inner).__name__}")
+        inner = getattr(inner, 'env', None)
+        depth += 1
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def _update_icm(agent, icm, configs):
+    if not hasattr(agent, 'memory'):
+        return None
+
+    buf = agent.memory
+    buf_size = getattr(buf, 'current_size',
+               getattr(buf, 'size',
+               getattr(buf, 'filled_i',
+               getattr(buf, 'data_count', None))))
+
+    if buf_size is None or buf_size < configs.batch_size:
+        return None
+
+    _sample = buf.sample()
+
+    _obs      = _sample.get('obs',      None)
+    _act      = _sample.get('actions',  None)
+    _obs_next = _sample.get('obs_next', None)
+
+    if _obs is None or _act is None or _obs_next is None:
+        print("[ICM WARNING] 字段缺失:", list(_sample.keys()))
+        return None
+
+    def dict_to_array(d):
+        if isinstance(d, dict):
+            arrays = []
+            for v in d.values():
+                if isinstance(v, torch.Tensor):
+                    arrays.append(v.cpu().numpy())
+                else:
+                    arrays.append(np.array(v))
+            return np.concatenate(arrays, axis=0)
+        elif isinstance(d, torch.Tensor):
+            return d.cpu().numpy()
+        else:
+            return np.array(d)
+
+    obs_arr      = dict_to_array(_obs)
+    act_arr      = dict_to_array(_act)
+    obs_next_arr = dict_to_array(_obs_next)
+
+    icm_logs = icm.update_from_batch(obs_arr, act_arr, obs_next_arr)
+    return icm_logs  # ← 修改：返回结果，不在这里打印
+
+def get_icm_eta(i_epoch, configs):
+    """
+    前 warmup_epochs 个 epoch：eta = 0（ICM 只训练，不注入奖励）
+    warmup 结束后线性升到 eta_max，经过 rampup_epochs 达到最大值
+    """
+    warmup  = getattr(configs, 'icm_warmup_epochs',   300)
+    rampup  = getattr(configs, 'icm_eta_rampup_epochs', 100)
+    eta_max = getattr(configs, 'icm_eta_max',          0.01)
+
+    if i_epoch < warmup:
+        return 0.0
+    elif i_epoch < warmup + rampup:
+        progress = (i_epoch - warmup) / rampup   # 0.0 → 1.0
+        return eta_max * progress
+    else:
+        return eta_max
+
 
 def parse_args():
     parser = argparse.ArgumentParser("Example of XuanCe: MASAC for MPE.")
@@ -42,7 +147,42 @@ if __name__ == "__main__":
     # print(configs)
     # print("hidden_sizes in config:", getattr(configs, 'hidden_sizes', None))
     # print("fc_hidden_sizes in config:", getattr(configs, 'fc_hidden_sizes', None))
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ← 新增：创建 ICM 并注入训练环境
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    _use_icm = getattr(configs, 'use_icm', False)
+    icm = None
 
+    if _use_icm:
+        _print_env_hierarchy(envs)
+
+        icm = ICMModule(
+            vec_dim=configs.vec_dim,
+            map_channels=getattr(configs, 'map_channels', 3),
+            map_size=getattr(configs, 'grid_size', 64),
+            action_dim=2,
+            feature_dim=getattr(configs, 'icm_feature_dim', 128),
+            eta=0.0,  # ← 修改：初始 eta=0，后期由 get_icm_eta 动态设置
+            beta=getattr(configs, 'icm_beta', 0.2),
+            lr=getattr(configs, 'icm_lr', 3e-4),
+            device=configs.device
+        )
+        warmup = getattr(configs, 'icm_warmup_epochs', 300)
+        rampup = getattr(configs, 'icm_eta_rampup_epochs', 100)
+        eta_max = getattr(configs, 'icm_eta_max', 0.01)
+        # ↓ 新增：启动时打印完整 ICM 计划
+        print(f"[ICM] 已创建 | beta={icm.beta} | device={icm.device}")
+        # print(type(warmup), type(rampup), type(eta_max))
+        # print(repr(warmup), repr(rampup), repr(eta_max))
+
+        print(
+            f"[ICM] 激活计划: epoch 0~{warmup} 预热(eta=0) → "
+            f"epoch {warmup}~{warmup + rampup} 线性升至 eta={eta_max} → "
+            f"epoch {warmup + rampup}+ 全速运行"
+        )
+
+        _inject_icm_to_envs(envs, icm)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     Agent = MASAC_Agents(config=configs, envs=envs)
     # print(f"[DEBUG] critic_1_representation 类型: {type(list(Agent.policy.critic_1_representation.values())[0])}")
@@ -75,6 +215,32 @@ if __name__ == "__main__":
         for i_epoch in range(num_epoch):
             print("Epoch: %d/%d:" % (i_epoch, num_epoch))
             Agent.train(eval_interval)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # ← 新增：benchmark 模式下同步更新 ICM
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            if icm is not None:
+                # 1. 动态更新 eta（前期=0，warmup 后线性升起）
+                current_eta = get_icm_eta(i_epoch, configs)
+                icm.eta = current_eta
+
+                # 2. 无论 eta 是否为 0，ICM 网络都持续训练
+                n_icm_updates = eval_interval // getattr(configs, 'training_frequency', 25)
+                last_logs = None
+                for _ in range(n_icm_updates):
+                    last_logs = _update_icm(Agent, icm, configs)
+
+                # 3. 每 10 个 epoch 打印一次，显示 eta 状态
+                if last_logs is not None and i_epoch % 10 == 0:
+                    warmup = getattr(configs, 'icm_warmup_epochs', 300)
+                    status = "预热中" if i_epoch < warmup else "已激活"
+                    print(
+                        f"[ICM] epoch={i_epoch:4d} | "
+                        f"eta={current_eta:.5f}({status}) | "
+                        f"loss={last_logs['icm_loss']:.4f} | "
+                        f"fwd={last_logs['forward_loss']:.4f} | "
+                        f"inv={last_logs['inverse_loss']:.4f}"
+                    )
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             test_scores = Agent.test(test_episodes=test_episode, test_envs=test_envs, close_envs=False)
 
             if np.mean(test_scores) > best_scores_info["mean"]:
@@ -88,6 +254,12 @@ if __name__ == "__main__":
     else:
         if configs.test:
             test_envs = make_envs(configs)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # ← 新增：test 模式下注入 ICM 到测试环境
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            if icm is not None:
+                _inject_icm_to_envs(test_envs, icm)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             Agent.load_model(path=Agent.model_dir_load)
             # scores = Agent.test(test_episodes=configs.test_episode, test_envs=test_envs, close_envs=True)
             # print(f"Mean Score: {np.mean(scores)}, Std: {np.std(scores)}")
