@@ -469,11 +469,10 @@ class SearchEnv(RawMultiAgentEnv):
             dist_bottom = self.grid_size - py
 
             # 遍历四个边界的距离，独立计算惩罚并叠加
-            for dist in [dist_left, dist_right, dist_top, dist_bottom]:
-                if dist < self.detect_radius:
-                    # 平方递增
-                    penalty_factor = (1.0 - (dist / self.detect_radius)) * 2
-                    r_boundary += -0.5 * penalty_factor
+            min_boundary_dist = min(dist_left, dist_right, dist_top, dist_bottom)
+            if min_boundary_dist < self.detect_radius:
+                penalty_factor = (1.0 - (min_boundary_dist / self.detect_radius)) * 2
+                r_boundary = -0.5 * penalty_factor  # 系数也适当减小
 
             # --- F. 障碍物持续避障惩罚（基于感知记忆，非全知）---
             r_obstacle = 0.0

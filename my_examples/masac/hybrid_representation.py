@@ -9,35 +9,72 @@ class CNNEncoder(nn.Module):
     处理多通道地图的 CNN 编码器。
     输入: (batch, C, H, W) = (batch, 3, 64, 64)
     输出: (batch, cnn_output_dim)
+
+    改动：
+      1. 加入 CoordConv：自动在输入地图上附加 X/Y 坐标通道
+      2. 换用小步长卷积，保留更多空间位置信息
     """
+
     def __init__(self, in_channels: int, grid_size: int, cnn_output_dim: int = 256):
         super().__init__()
 
+        self.grid_size = grid_size
+
+        # ── 改动 1：CoordConv，输入通道数 +2（x坐标通道 + y坐标通道）──
+        actual_in_channels = in_channels + 2
+
         self.cnn = nn.Sequential(
-            # (batch, 3, 64, 64) → (batch, 16, 15, 15)
-            nn.Conv2d(in_channels, 16, kernel_size=8, stride=4, padding=0),
+            # ── 改动 2：stride 从 4 改为 2，保留更多空间细节 ──
+            # (batch, C+2, 64, 64) → (batch, 32, 31, 31)
+            nn.Conv2d(actual_in_channels, 32, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
-            # (batch, 16, 15, 15) → (batch, 32, 6, 6)
-            nn.Conv2d(16, 32, kernel_size=4, stride=2, padding=0),
+            # (batch, 32, 31, 31) → (batch, 64, 15, 15)
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
-            # (batch, 32, 6, 6) → (batch, 64, 4, 4)
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=0),
+            # (batch, 64, 15, 15) → (batch, 128, 7, 7)
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
-            nn.Flatten()  # → (batch, 64*4*4) = (batch, 1024)
+            # (batch, 128, 7, 7) → (batch, 64, 3, 3)
+            nn.Conv2d(128, 64, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Flatten()
         )
 
-        # 计算 CNN 输出维度（自动推导，不用手算）
-        dummy = torch.zeros(1, in_channels, grid_size, grid_size)
+        # 自动推导展平维度（加了坐标通道后尺寸变了，用 dummy 自动算）
+        dummy = torch.zeros(1, actual_in_channels, grid_size, grid_size)
         cnn_flat_dim = self.cnn(dummy).shape[1]
 
-        # 压缩到目标维度
         self.fc = nn.Sequential(
             nn.Linear(cnn_flat_dim, cnn_output_dim),
             nn.ReLU()
         )
 
-    def forward(self, x):
-        return self.fc(self.cnn(x))
+    def _add_coord_channels(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        给输入地图附加两个坐标通道。
+        x: (batch, C, H, W)
+        返回: (batch, C+2, H, W)
+
+        x_coord 通道：每列的值从 -1 到 1（代表水平位置）
+        y_coord 通道：每行的值从 -1 到 1（代表垂直位置）
+        """
+        batch, C, H, W = x.shape
+
+        # 生成 x 坐标：shape (1, 1, 1, W)，广播到 (batch, 1, H, W)
+        x_coords = torch.linspace(-1, 1, W, device=x.device)
+        x_coords = x_coords.view(1, 1, 1, W).expand(batch, 1, H, W)
+
+        # 生成 y 坐标：shape (1, 1, H, 1)，广播到 (batch, 1, H, W)
+        y_coords = torch.linspace(-1, 1, H, device=x.device)
+        y_coords = y_coords.view(1, 1, H, 1).expand(batch, 1, H, W)
+
+        # 拼接到原始通道后面
+        return torch.cat([x, x_coords, y_coords], dim=1)  # (batch, C+2, H, W)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 先加坐标通道，再过 CNN
+        x = self._add_coord_channels(x)  # (batch, C+2, H, W)
+        return self.fc(self.cnn(x))  # (batch, cnn_output_dim)
 
 
 class HybridRepresentation(nn.Module):

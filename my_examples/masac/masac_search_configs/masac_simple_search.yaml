@@ -3,15 +3,15 @@ project_name: "XuanCe_Benchmark"
 logger: "tensorboard"  # Choices: tensorboard, wandb.
 wandb_user_name: "your_user_name"
 
-#render: true
-#test: true
-#benchmark: false
-#parallels: 1
+render: true
+test: true
+benchmark: false
+parallels: 1
 
-render: false
-test: false
-benchmark: true
-parallels: 16
+#render: false
+#test: false
+#benchmark: true
+#parallels: 16
 
 render_mode: 'human' # Choices: 'human', 'rgb_array'.
 fps: 50
@@ -87,14 +87,14 @@ num_obstacles : 0
 max_obstacle_ratio: 0.20 # 障碍物占地图面积上限 20%
 max_episode_steps : 300
 detect_radius : 4.0
-decay_rate : 1
+decay_rate : 0.999
 min_decay_val : 0.1
 coverage_reward_scale: 10.0  # 全局覆盖率增量奖励系数
 coverage_threshold: 0.90     # 覆盖率达到此值时 episode 成功终止
 coverage_done_reward: 20.0   # 覆盖率达标时的额外奖励
 
 agent_collision_dist : 3.0
-max_speed : 1.0
+max_speed : 2.0
 map_channels : 3         # ← 新增：地图通道数
 map_h : 64               # ← 新增：地图高度（等于 grid_size）
 map_w : 64               # ← 新增：地图宽度（等于 grid_size）
